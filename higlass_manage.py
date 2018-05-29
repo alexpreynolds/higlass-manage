@@ -109,6 +109,40 @@ def import_file(hg_name, filepath, filetype, datatype, assembly):
 
     pass
 
+def delete_file(hg_name, uid, filepath):
+    try:
+        # get this container's temporary directory
+        temp_dir = get_temp_dir(hg_name)
+        if not op.exists(temp_dir):
+            print('Could not locate temporary directory [%s]' % (temp_dir), file=sys.stderr)
+            return
+
+        filename = op.split(filepath)[1]
+        to_delete_path = op.join(temp_dir, filename)
+        
+        if to_delete_path != filepath:
+            # if this file exists in the temporary dir
+            # remove it
+            if op.exists(to_delete_path):
+                print("Removing file in temporary dir: %s" % (to_delete_path))
+                os.remove(to_delete_path)
+
+    except ValueError as ve:
+        pass
+
+    client = docker.from_env()
+    container_name = hg_name_to_container_name(hg_name)
+    container = client.containers.get(container_name)
+
+    command = 'python higlass-server/manage.py delete_tileset --uid {}'.format(uid)
+    if filename:
+        command += ' --filename {}'.format(filename)
+    (exit_code, output) = container.exec_run(command)
+    print('exit_code:', exit_code)
+    print('output:', output)
+
+    pass
+    
 def get_temp_dir(hg_name):
     client = docker.from_env()
     container_name = hg_name_to_container_name(hg_name)
@@ -375,6 +409,19 @@ def ingest(filename, hg_name, filetype, datatype, assembly, chromsizes_filename,
 
     (to_import, filetype) = aggregate_file(filename, filetype, assembly, chromsizes_filename, has_header)
     import_file(hg_name, to_import, filetype, datatype, assembly)
+
+@cli.command()
+@click.argument('uid')
+@click.option('--filename', default=None, help="The name of the file")
+def remove(uid):
+    '''
+    Remove a dataset, specified by UID
+    '''
+    if len(uid):
+        print('Specify a UID for dataset to remove', file=sys.stderr)
+        return
+
+    delete_file(hg_name, to_delete, filename)
 
 @cli.command()
 @click.argument('hg_name', nargs=-1)
