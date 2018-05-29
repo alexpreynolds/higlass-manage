@@ -5,8 +5,10 @@ import click
 import clodius.cli.aggregate as cca
 import clodius.chromosomes as cch
 import docker
+import json
 import os
 import os.path as op
+import requests
 import subprocess as sp
 import sys
 import tempfile
@@ -142,7 +144,7 @@ def delete_file(hg_name, uid, filepath):
     print('output:', output)
 
     pass
-    
+
 def get_temp_dir(hg_name):
     client = docker.from_env()
     container_name = hg_name_to_container_name(hg_name)
@@ -177,6 +179,10 @@ def infer_filetype(filename):
         return 'bigwig'
     elif ext.lower() == '.mcool' or ext.lower() == '.cool':
         return 'cooler'
+    elif ext.lower() == '.htime':
+        return 'time-interval-json'
+    elif ext.lower() == '.hitile':
+        return 'hitile'
 
     return None
 
@@ -184,6 +190,10 @@ def infer_datatype(filetype):
     if filetype == 'cooler':
         return 'matrix'
     if filetype == 'bigwig':
+        return 'vector'
+    if filetype == 'time-interval-json':
+        return 'time-interval'
+    if filetype == 'hitile':
         return 'vector'
 
 def recommend_filetype(filename):
@@ -264,8 +274,10 @@ def start(temp_dir, data_dir, version, port, name, site_url):
         # container isn't running so no need to stop it
         pass
 
-    print('pulling version:', version)
-    image = client.images.pull('gehlenborglab/higlass', version)
+    if version == 'local':
+        image = client.images.get('image-default')
+    else:
+        image = client.images.pull('gehlenborglab/higlass', version)
 
     data_dir = op.expanduser(data_dir)
     temp_dir = op.expanduser(temp_dir)
@@ -306,7 +318,7 @@ def start(temp_dir, data_dir, version, port, name, site_url):
         '--name', 'higlass-container',
         'gehlenborglab/higlass'])
     
-    webbrowser.open('http://localhost:{port}/'.format(port=port))
+    webbrowser.open('http://localhost:{port}/app'.format(port=port))
     pass
 
 @cli.command()
@@ -324,6 +336,27 @@ def list():
             directories = " ".join( ['{}:{}'.format(m['Source'], m['Destination']) for m in  config['Mounts']])
             port = config['HostConfig']['PortBindings']['80/tcp'][0]['HostPort']
             print(hm_name, "{} {}".format(directories, port))
+
+@cli.command()
+@click.option('--hg-name', default='default', 
+        help='The name of the higlass container to import this file to')
+def list_data(hg_name):
+    '''
+    List the datasets in an instance
+    '''
+    port = get_port(hg_name)
+
+    # use a really high limit to avoid paging
+    url = 'http://localhost:{}/api/v1/tilesets/?limit=10000'.format(port)
+    ret = requests.get(url)
+
+    if ret.status_code != 200:
+        print('Error retrieving tilesets:', ret)
+        return
+
+    j = json.loads(ret.content.decode('utf8'))
+    for result in j['results']:
+        print(" | ".join([result['uuid'], result['filetype'], result['datatype'], result['name']]))
 
 @cli.command()
 @click.argument('names', nargs=-1)
@@ -410,10 +443,11 @@ def ingest(filename, hg_name, filetype, datatype, assembly, chromsizes_filename,
     (to_import, filetype) = aggregate_file(filename, filetype, assembly, chromsizes_filename, has_header)
     import_file(hg_name, to_import, filetype, datatype, assembly)
 
+    
 @cli.command()
 @click.argument('uid')
 @click.option('--filename', default=None, help="The name of the file")
-def remove(uid):
+def remove_data(uid):
     '''
     Remove a dataset, specified by UID
     '''
@@ -423,11 +457,30 @@ def remove(uid):
 
     delete_file(hg_name, to_delete, filename)
 
+    
+@cli.command()
+@click.argument('hg_name', nargs=-1)
+def shell(hg_name):
+    '''
+    Start a shell in a higlass container
+    '''
+    if len(hg_name) == 0:
+        hg_name = 'default'
+    else:
+        hg_name = hg_name[0]
+
+    client = docker.from_env()
+    container_name = hg_name_to_container_name(hg_name)
+    container = client.containers.get(container_name)
+
+    sp.run(['docker', 'exec', '-it', container_name, 'bash'])
+    
+
 @cli.command()
 @click.argument('hg_name', nargs=-1)
 def log(hg_name):
     '''
-    Return the error log for this container.
+    Return the error log for this container
     '''
     if len(hg_name) == 0:
         hg_name = 'default'
