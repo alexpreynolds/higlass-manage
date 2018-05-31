@@ -142,8 +142,6 @@ def delete_file(hg_name, uid, filepath):
     container = client.containers.get(container_name)
 
     command = 'python higlass-server/manage.py delete_tileset --uid {}'.format(uid)
-    if filename:
-        command += ' --filename {}'.format(filename)
     (exit_code, output) = container.exec_run(command)
     print('exit_code:', exit_code)
     print('output:', output)
